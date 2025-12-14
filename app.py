@@ -100,14 +100,14 @@ def load_llm():
         if not api_key:
             raise ValueError("HF_API_KEY is not set in secrets")
         
-        # Use a model that's available on free Inference API
-        model_name = os.getenv("MODEL_NAME", "microsoft/phi-2")
-        client = InferenceClient(model=model_name, token=api_key)
+        # Use google/flan-t5-base - works with free serverless inference
+        model_name = os.getenv("MODEL_NAME", "google/flan-t5-base")
+        client = InferenceClient(token=api_key)
         
-        return client
+        return client, model_name
     except Exception as e:
         st.error(f"Error loading Hugging Face client: {e}")
-        return None
+        return None, None
 
 @st.cache_resource
 def load_embeddings():
@@ -126,22 +126,23 @@ def load_text_splitter():
 
 # Helper functions
 def invoke_llm(message, max_tokens=1000):
-    client = load_llm()
+    result = load_llm()
     
-    if client is None:
+    if result is None or result[0] is None:
         return "Error: Hugging Face client not loaded. Please check HF_API_KEY in secrets."
     
-    # Simple prompt format for phi-2
-    prompt = f"Instruct: {message}\nOutput:"
+    client, model_name = result
+    
+    # Simple prompt for FLAN-T5
+    prompt = message
     
     try:
         response = client.text_generation(
             prompt,
-            max_new_tokens=max_tokens,
+            model=model_name,
+            max_new_tokens=min(max_tokens, 512),
             temperature=0.7,
-            top_p=0.9,
-            return_full_text=False,
-            stop_sequences=["Instruct:", "\n\n"]
+            return_full_text=False
         )
         
         generated = response.strip()
