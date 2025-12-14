@@ -13,7 +13,7 @@ os.environ["TAVILY_API_KEY"] = os.getenv("TAVILY_API_KEY", "")
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_tavily import TavilySearchResults
+from tavily import TavilyClient
 from langchain_community.vectorstores import FAISS
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
@@ -96,7 +96,8 @@ if 'initialized' not in st.session_state:
 @st.cache_resource(show_spinner="Loading Qwen2.5-1.5B model...")
 def load_llm():
     try:
-        model_name = "Qwen/Qwen2.5-1.5B-Instruct"
+        # Allow overriding to a smaller model to fit memory; default to 0.5B to avoid OOM kills
+        model_name = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-0.5B-Instruct")
         tokenizer = AutoTokenizer.from_pretrained(
             model_name,
             use_fast=True,
@@ -113,9 +114,9 @@ def load_llm():
         
         model = AutoModelForCausalLM.from_pretrained(
             model_name,
-            dtype=dtype,
+            torch_dtype=dtype,
             low_cpu_mem_usage=True,
-            device_map=device if torch.cuda.is_available() else None
+            device_map="auto" if torch.cuda.is_available() else None
         )
         
         if tokenizer.pad_token is None:
@@ -138,7 +139,10 @@ def load_embeddings():
 
 @st.cache_resource
 def load_web_searcher():
-    return TavilySearchResults(k=3)
+    api_key = os.getenv("TAVILY_API_KEY", "")
+    if not api_key:
+        raise ValueError("TAVILY_API_KEY is not set")
+    return TavilyClient(api_key=api_key)
 
 @st.cache_resource
 def load_text_splitter():
@@ -208,30 +212,33 @@ def get_study_material(checkpoint_obj):
     search_string = f"{checkpoint_obj.topic}: " + "; ".join(checkpoint_obj.objectives)
     
     try:
-        web_searcher = load_web_searcher()
-        web_results = web_searcher.invoke({"query": search_string})
+        tavily_client = load_web_searcher()
+        web_results = tavily_client.search(search_string, max_results=3)
     except Exception as e:
         return f"Topic: {checkpoint_obj.topic}\n\nLearning objectives:\n" + "\n".join([f"- {obj}" for obj in checkpoint_obj.objectives]), f"Error: {str(e)}"
     
     all_content = []
     
-    if isinstance(web_results, list):
-        for result in web_results:
+    # Tavily returns a dict with a "results" list
+    results_list = web_results.get("results", web_results) if isinstance(web_results, dict) else web_results
+
+    if isinstance(results_list, list):
+        for result in results_list:
             if isinstance(result, dict):
-                text_content = result.get("content", "")
+                text_content = result.get("content") or result.get("snippet") or ""
             elif isinstance(result, str):
                 text_content = result
             else:
                 text_content = str(result)
-            
+
             if text_content and len(text_content.strip()) > 0:
                 all_content.append(text_content)
-    elif isinstance(web_results, dict):
-        text_content = web_results.get("content", str(web_results))
+    elif isinstance(results_list, dict):
+        text_content = results_list.get("content", str(results_list))
         if text_content:
             all_content.append(text_content)
     else:
-        all_content.append(str(web_results))
+        all_content.append(str(results_list))
     
     if all_content:
         return "\n\n---\n\n".join(all_content), f"Retrieved {len(all_content)} web results"
@@ -299,7 +306,7 @@ def get_rag_hint(search_index, question, topic):
     
     prompt = f"Context: {context[:600]}\n\nQuestion: {question}\n\nBrief answer:"
     
-    answer = invoke_llm(prompt, max_tokens=100)
+    answer = invoke_llm(prompt, max_tokens=1000)
     return answer if answer else "Unable to generate hint"
 
 # MILESTONE 3: FEYNMAN TEACHING MODULE
@@ -332,7 +339,7 @@ Rules:
 
 Simple explanation:"""
     
-    explanation = invoke_llm(feynman_prompt, max_tokens=120)
+    explanation = invoke_llm(feynman_prompt, max_tokens=1000)
     return explanation if explanation else "Let me explain this more simply: " + context[:200]
 
 # MILESTONE 2 & 3: UNDERSTANDING VERIFICATION & KNOWLEDGE GAP IDENTIFICATION
@@ -423,6 +430,14 @@ def render_checkpoint_selection():
             if st.button(f"{cp.topic}", key=f"select_{cp.id}", use_container_width=True):
                 st.session_state.current_checkpoint = cp
                 st.session_state.stage = "loading"
+                # Reset checkpoint-specific state
+                st.session_state.study_material = None
+                st.session_state.search_index = None
+                st.session_state.questions = []
+                st.session_state.answers = {}
+                st.session_state.quiz_submitted = False
+                st.session_state.show_hint = {}
+                st.session_state.hints_cache = {}
                 st.rerun()
     
     with col2:
@@ -430,6 +445,10 @@ def render_checkpoint_selection():
 
 # MILESTONE 1 & 2: STUDY MATERIAL DISPLAY & CONTEXT PROCESSING
 def render_study_material():
+    # Only render study material if explicitly in study stage, not quiz
+    if st.session_state.stage != "study":
+        return
+    
     cp = st.session_state.current_checkpoint
     st.header(f"Study Material: {cp.topic}")
     
@@ -446,19 +465,34 @@ def render_study_material():
         st.markdown(st.session_state.study_material)
     
     st.markdown("---")
-    
-    if st.button("Start Quiz", type="primary", use_container_width=True):
-        with st.spinner("Generating quiz questions..."):
-            st.session_state.questions = generate_questions(cp, st.session_state.study_material)
-            st.session_state.answers = {}
-            st.session_state.show_hint = {}
-            st.session_state.hints_cache = {}
-            st.session_state.stage = "quiz"
+
+    # Only show start button when explicitly in study stage
+    if st.session_state.stage == "study" and not st.session_state.questions:
+        if st.button("Start Quiz", key=f"start_quiz_btn_{cp.id}", type="primary", use_container_width=True):
+            st.session_state.stage = "quiz"  # Change stage FIRST
+            st.session_state.questions = ["Generating..."]  # Mark as generating
             st.rerun()
 
 # MILESTONE 2: QUIZ ASSESSMENT
 def render_quiz():
     cp = st.session_state.current_checkpoint
+    
+    # Ensure study material and search index exist
+    if st.session_state.study_material is None or st.session_state.search_index is None:
+        with st.spinner("Fetching study material..."):
+            material, source = get_study_material(cp)
+            st.session_state.study_material = material
+            st.session_state.search_index = make_search_index(material)
+    
+    # Generate questions if marked as generating
+    if st.session_state.questions == ["Generating..."]:
+        with st.spinner("Generating quiz questions..."):
+            st.session_state.questions = generate_questions(cp, st.session_state.study_material)
+            st.session_state.answers = {}
+            st.session_state.show_hint = {}
+            st.session_state.hints_cache = {}
+        st.rerun()
+    
     st.header(f"Quiz: {cp.topic}")
     st.info(f"Pass mark: {int(cp.pass_mark * 100)}%")  # MILESTONE 2: Display threshold
     
@@ -474,12 +508,12 @@ def render_quiz():
         )
         st.session_state.answers[idx] = answer
         
-        col1, col2 = st.columns([1, 4])
-        with col1:
-            if st.button("Get Hint", key=f"hint_{idx}"):
-                st.session_state.show_hint[idx] = True
-                st.rerun()
+        # Hint button
+        if st.button("Get Hint", key=f"hint_btn_{idx}"):
+            st.session_state.show_hint[idx] = True
+            st.rerun()
         
+        # Display hint if requested
         if st.session_state.show_hint.get(idx, False):
             with st.expander("Hint", expanded=True):
                 # Check if hint is already cached
@@ -495,9 +529,15 @@ def render_quiz():
         st.markdown("---")
     
     if st.button("Submit Quiz", type="primary", use_container_width=True):
-        # Check all answers provided
-        if len(st.session_state.answers) < len(st.session_state.questions):
-            st.error("Please answer all questions before submitting!")
+        # Check all answers provided and not empty
+        unanswered = []
+        for i in range(len(st.session_state.questions)):
+            answer = st.session_state.answers.get(i, "").strip()
+            if not answer:
+                unanswered.append(i + 1)
+        
+        if unanswered:
+            st.error(f"Please answer all questions before submitting! Missing answers for question(s): {', '.join(map(str, unanswered))}")
         else:
             answers_list = [st.session_state.answers.get(i, "") for i in range(len(st.session_state.questions))]
             score, weak, incorrect_qa = grade_answers(
@@ -643,13 +683,12 @@ def render_results():
                 # MILESTONE 3: Reset Feynman state
                 st.session_state.feynman_explanations = {}
                 st.session_state.incorrect_answers = {}
-                st.session_state.retry_count = 0
                 st.rerun()
         else:
             # MILESTONE 3: Loop-back to Feynman teaching for failed attempts
             current_retry = st.session_state.retry_count.get(cp.id, 0)
             if current_retry < st.session_state.max_retries:
-                if st.button("📚 Get Simplified Explanations", type="primary", use_container_width=True):
+                if st.button("Get Simplified Explanations", type="primary", use_container_width=True):
                     st.session_state.stage = "feynman"
                     st.rerun()
             else:
@@ -676,7 +715,6 @@ def render_results():
             # MILESTONE 3: Reset Feynman state (but preserve retry_count per checkpoint)
             st.session_state.feynman_explanations = {}
             st.session_state.incorrect_answers = {}
-            # Don't reset retry_count - it's checkpoint-specific and should persist
             st.rerun()
 
 # MILESTONE 4: MAIN WORKFLOW ORCHESTRATION
