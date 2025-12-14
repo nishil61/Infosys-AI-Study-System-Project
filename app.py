@@ -101,6 +101,7 @@ def load_llm():
             raise ValueError("HF_API_KEY is not set in secrets")
         
         model_name = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-0.5B-Instruct")
+        # Use InferenceClient without specifying base_url to use default endpoint
         client = InferenceClient(model=model_name, token=api_key)
         
         return client
@@ -130,20 +131,19 @@ def invoke_llm(message, max_tokens=1000):
     if client is None:
         return "Error: Hugging Face client not loaded. Please check HF_API_KEY in secrets."
     
-    messages = [
-        {"role": "system", "content": "You are a helpful AI teacher assistant."},
-        {"role": "user", "content": message}
-    ]
+    # Format prompt for instruction-following models
+    prompt = f"<|im_start|>system\nYou are a helpful AI teacher assistant.<|im_end|>\n<|im_start|>user\n{message}<|im_end|>\n<|im_start|>assistant\n"
     
     try:
-        response = client.chat_completion(
-            messages=messages,
-            max_tokens=max_tokens,
+        response = client.text_generation(
+            prompt,
+            max_new_tokens=max_tokens,
             temperature=0.6,
-            top_p=0.9
+            top_p=0.9,
+            return_full_text=False
         )
         
-        generated = response.choices[0].message.content.strip()
+        generated = response.strip()
         return generated if generated else "I apologize, but I couldn't generate a response. Please try again."
     except Exception as e:
         return f"Error generating response: {str(e)}"
