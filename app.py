@@ -100,8 +100,8 @@ def load_llm():
         if not api_key:
             raise ValueError("HF_API_KEY is not set in secrets")
         
-        # Use google/flan-t5-base - works with free serverless inference
-        model_name = os.getenv("MODEL_NAME", "google/flan-t5-base")
+        # Use HuggingFaceH4/zephyr-7b-beta - reliable serverless model
+        model_name = os.getenv("MODEL_NAME", "HuggingFaceH4/zephyr-7b-beta")
         client = InferenceClient(token=api_key)
         
         return client, model_name
@@ -133,22 +133,34 @@ def invoke_llm(message, max_tokens=1000):
     
     client, model_name = result
     
-    # Simple prompt for FLAN-T5
-    prompt = message
+    # Format for instruction-tuned models
+    prompt = f"<|user|>\n{message}</s>\n<|assistant|>\n"
     
     try:
         response = client.text_generation(
             prompt,
             model=model_name,
-            max_new_tokens=min(max_tokens, 512),
+            max_new_tokens=min(max_tokens, 500),
             temperature=0.7,
+            do_sample=True,
             return_full_text=False
         )
         
-        generated = response.strip()
+        if isinstance(response, str):
+            generated = response.strip()
+        else:
+            generated = str(response).strip()
+            
         return generated if generated else "I apologize, but I couldn't generate a response. Please try again."
     except Exception as e:
-        return f"Error generating response: {str(e)}"
+        error_msg = str(e)
+        # Provide more helpful error message
+        if "404" in error_msg or "not found" in error_msg.lower():
+            return "The AI model is currently unavailable. Please try again later."
+        elif "503" in error_msg or "loading" in error_msg.lower():
+            return "The AI model is loading. Please wait a moment and try again."
+        else:
+            return f"Error: {error_msg[:200]}"
 
 def get_study_material(checkpoint_obj):
     # MILESTONE 1: Prioritize user-provided notes first
