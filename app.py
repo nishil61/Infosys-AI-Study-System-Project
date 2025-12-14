@@ -10,8 +10,7 @@ import json
 load_dotenv()
 os.environ["TAVILY_API_KEY"] = os.getenv("TAVILY_API_KEY", "")
 
-from transformers import AutoTokenizer, AutoModelForCausalLM
-import torch
+from huggingface_hub import InferenceClient
 from langchain_huggingface import HuggingFaceEmbeddings
 from tavily import TavilyClient
 from langchain_community.vectorstores import FAISS
@@ -93,45 +92,21 @@ if 'initialized' not in st.session_state:
     st.session_state.max_retries = 3
 
 # LLM INTEGRATION: Core Large Language Model for reasoning and generation
-@st.cache_resource(show_spinner="Loading Qwen2.5-1.5B model...")
+@st.cache_resource
 def load_llm():
+    """Load Hugging Face Inference API client."""
     try:
-        # Allow overriding to a smaller model to fit memory; default to 0.5B to avoid OOM kills
+        api_key = os.getenv("HF_API_KEY", "")
+        if not api_key:
+            raise ValueError("HF_API_KEY is not set in secrets")
+        
         model_name = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-0.5B-Instruct")
-        tokenizer = AutoTokenizer.from_pretrained(
-            model_name,
-            use_fast=True,
-            padding_side='left'
-        )
+        client = InferenceClient(model=model_name, token=api_key)
         
-        # Better dtype for CPU/GPU
-        if torch.cuda.is_available():
-            device = "cuda"
-            dtype = torch.float16
-        else:
-            device = "cpu"
-            dtype = torch.float32
-        
-        model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            torch_dtype=dtype,
-            low_cpu_mem_usage=True,
-            device_map="auto" if torch.cuda.is_available() else None
-        )
-        
-        if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
-        
-        model.eval()
-        
-        # Move to device if CPU
-        if device == "cpu":
-            model = model.to(device)
-        
-        return tokenizer, model
+        return client
     except Exception as e:
-        st.error(f"Error loading model: {e}")
-        return None, None
+        st.error(f"Error loading Hugging Face client: {e}")
+        return None
 
 @st.cache_resource
 def load_embeddings():
@@ -150,10 +125,10 @@ def load_text_splitter():
 
 # Helper functions
 def invoke_llm(message, max_tokens=1000):
-    tokenizer, model = load_llm()
+    client = load_llm()
     
-    if tokenizer is None or model is None:
-        return "Error: Model not loaded"
+    if client is None:
+        return "Error: Hugging Face client not loaded. Please check HF_API_KEY in secrets."
     
     messages = [
         {"role": "system", "content": "You are a helpful AI teacher assistant."},
@@ -161,47 +136,17 @@ def invoke_llm(message, max_tokens=1000):
     ]
     
     try:
-        text = tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True
+        response = client.chat_completion(
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=0.6,
+            top_p=0.9
         )
         
-        inputs = tokenizer(
-            text,
-            return_tensors="pt",
-            truncation=True,
-            max_length=384,
-            padding=False
-        )
-        
-        device = next(model.parameters()).device
-        inputs = {k: v.to(device) for k, v in inputs.items()}
-        
-        with torch.no_grad():
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=max_tokens,
-                temperature=0.6,
-                do_sample=True,
-                top_p=0.9,
-                top_k=40,
-                pad_token_id=tokenizer.pad_token_id,
-                eos_token_id=tokenizer.eos_token_id,
-                repetition_penalty=1.1,
-                num_beams=1,
-                use_cache=True
-            )
-        
-        generated = tokenizer.decode(
-            outputs[0][inputs['input_ids'].shape[1]:],
-            skip_special_tokens=True
-        ).strip()
-        
-        return generated if generated else ""
+        generated = response.choices[0].message.content.strip()
+        return generated if generated else "I apologize, but I couldn't generate a response. Please try again."
     except Exception as e:
-        st.error(f"Error generating response: {e}")
-        return ""
+        return f"Error generating response: {str(e)}"
 
 def get_study_material(checkpoint_obj):
     # MILESTONE 1: Prioritize user-provided notes first
