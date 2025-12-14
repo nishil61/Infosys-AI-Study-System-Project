@@ -100,8 +100,8 @@ def load_llm():
         if not api_key:
             raise ValueError("HF_API_KEY is not set in secrets")
         
-        model_name = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-0.5B-Instruct")
-        # Use InferenceClient without specifying base_url to use default endpoint
+        # Use a model that's available on free Inference API
+        model_name = os.getenv("MODEL_NAME", "microsoft/phi-2")
         client = InferenceClient(model=model_name, token=api_key)
         
         return client
@@ -131,16 +131,17 @@ def invoke_llm(message, max_tokens=1000):
     if client is None:
         return "Error: Hugging Face client not loaded. Please check HF_API_KEY in secrets."
     
-    # Format prompt for instruction-following models
-    prompt = f"<|im_start|>system\nYou are a helpful AI teacher assistant.<|im_end|>\n<|im_start|>user\n{message}<|im_end|>\n<|im_start|>assistant\n"
+    # Simple prompt format for phi-2
+    prompt = f"Instruct: {message}\nOutput:"
     
     try:
         response = client.text_generation(
             prompt,
             max_new_tokens=max_tokens,
-            temperature=0.6,
+            temperature=0.7,
             top_p=0.9,
-            return_full_text=False
+            return_full_text=False,
+            stop_sequences=["Instruct:", "\n\n"]
         )
         
         generated = response.strip()
