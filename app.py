@@ -100,8 +100,8 @@ def load_llm():
         if not api_key:
             raise ValueError("HF_API_KEY is not set in secrets")
         
-        # Use HuggingFaceH4/zephyr-7b-beta - reliable serverless model
-        model_name = os.getenv("MODEL_NAME", "HuggingFaceH4/zephyr-7b-beta")
+        # Use mistralai/Mistral-7B-Instruct-v0.2 - supports text-generation
+        model_name = os.getenv("MODEL_NAME", "mistralai/Mistral-7B-Instruct-v0.2")
         client = InferenceClient(token=api_key)
         
         return client, model_name
@@ -133,8 +133,8 @@ def invoke_llm(message, max_tokens=1000):
     
     client, model_name = result
     
-    # Format for instruction-tuned models
-    prompt = f"<|user|>\n{message}</s>\n<|assistant|>\n"
+    # Format for Mistral instruction models
+    prompt = f"[INST] {message} [/INST]"
     
     try:
         response = client.text_generation(
@@ -159,6 +159,8 @@ def invoke_llm(message, max_tokens=1000):
             return "The AI model is currently unavailable. Please try again later."
         elif "503" in error_msg or "loading" in error_msg.lower():
             return "The AI model is loading. Please wait a moment and try again."
+        elif "rate limit" in error_msg.lower():
+            return "Rate limit reached. Please wait a moment and try again."
         else:
             return f"Error: {error_msg[:200]}"
 
