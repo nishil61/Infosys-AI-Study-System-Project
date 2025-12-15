@@ -320,6 +320,9 @@ def generate_questions(checkpoint_obj, material, num_questions=2):
             else:
                 question = line
             
+            # Strip point annotations like "(2 points)" or "(5 pts)"
+            question = re.sub(r'\s*\(\d+\s*(?:points?|pts?)\)\s*$', '', question, flags=re.IGNORECASE).strip()
+            
             if not question.endswith('?'):
                 question += '?'
             
@@ -462,16 +465,6 @@ def grade_answers(checkpoint_obj, material, questions, answers):
 def render_header():
     st.title("Neural Networks Study System")
     st.markdown("---")
-    # Diagnostics (non-sensitive): show presence/source of required secrets
-    with st.sidebar.expander("Diagnostics", expanded=False):
-        hf_found, hf_src, hf_name = get_secret_source(
-            "HF_API_KEY", ["HUGGINGFACEHUB_API_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HF_TOKEN"]
-        )
-        tv_found, tv_src, tv_name = get_secret_source("TAVILY_API_KEY")
-        model_name = os.getenv("MODEL_NAME", "HuggingFaceH4/zephyr-7b-beta")
-        st.write(f"HF key: {'Found' if hf_found else 'Missing'} ({hf_src})")
-        st.write(f"Tavily key: {'Found' if tv_found else 'Missing'} ({tv_src})")
-        st.write(f"Model: {model_name}")
 
 # MILESTONE 4: CHECKPOINT SELECTION & SEQUENTIAL PROGRESSION
 def render_checkpoint_selection():
