@@ -41,6 +41,24 @@ def get_secret_value(name: str, alt_names=None, default: str = "") -> str:
             return val
     return default
 
+def get_secret_source(name: str, alt_names=None):
+    alt_names = alt_names or []
+    try:
+        if "st" in globals() and hasattr(st, "secrets"):
+            if name in st.secrets:
+                return True, "st.secrets", name
+            for alt in alt_names:
+                if alt in st.secrets:
+                    return True, "st.secrets", alt
+    except Exception:
+        pass
+    if os.getenv(name):
+        return True, "env", name
+    for alt in alt_names:
+        if os.getenv(alt):
+            return True, "env", alt
+    return False, "missing", None
+
 # Page config
 st.set_page_config(page_title="Neural Networks Study System", page_icon="NN", layout="wide")
 
@@ -120,8 +138,12 @@ if 'initialized' not in st.session_state:
 def load_llm():
     """Load Hugging Face Inference API client."""
     try:
-        # Support both HF_API_KEY and HUGGINGFACEHUB_API_TOKEN
-        api_key = get_secret_value("HF_API_KEY", alt_names=["HUGGINGFACEHUB_API_TOKEN"], default="")
+        # Support common HF token names
+        api_key = get_secret_value(
+            "HF_API_KEY",
+            alt_names=["HUGGINGFACEHUB_API_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HF_TOKEN"],
+            default="",
+        )
         if not api_key:
             raise ValueError("HF_API_KEY is not set in secrets")
         
@@ -440,6 +462,16 @@ def grade_answers(checkpoint_obj, material, questions, answers):
 def render_header():
     st.title("Neural Networks Study System")
     st.markdown("---")
+    # Diagnostics (non-sensitive): show presence/source of required secrets
+    with st.sidebar.expander("Diagnostics", expanded=False):
+        hf_found, hf_src, hf_name = get_secret_source(
+            "HF_API_KEY", ["HUGGINGFACEHUB_API_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HF_TOKEN"]
+        )
+        tv_found, tv_src, tv_name = get_secret_source("TAVILY_API_KEY")
+        model_name = os.getenv("MODEL_NAME", "HuggingFaceH4/zephyr-7b-beta")
+        st.write(f"HF key: {'Found' if hf_found else 'Missing'} ({hf_src})")
+        st.write(f"Tavily key: {'Found' if tv_found else 'Missing'} ({tv_src})")
+        st.write(f"Model: {model_name}")
 
 # MILESTONE 4: CHECKPOINT SELECTION & SEQUENTIAL PROGRESSION
 def render_checkpoint_selection():
