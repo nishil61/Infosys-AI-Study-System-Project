@@ -106,7 +106,7 @@ def load_llm():
         
         return client, model_name
     except Exception as e:
-        st.error(f"Error loading Hugging Face client: {e}")
+        # Don't show error in UI, let calling code handle it
         return None, None
 
 @st.cache_resource
