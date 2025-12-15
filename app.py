@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from dataclasses import dataclass
 from typing import List, Dict
 import json
+import re
 
 # Load environment
 load_dotenv()
@@ -125,7 +126,7 @@ def load_text_splitter():
     return RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=150)
 
 # Helper functions
-def invoke_llm(message, max_tokens=1000):
+def invoke_llm(message, max_tokens=1000, system_prompt=None):
     result = load_llm()
     
     if result is None or result[0] is None:
@@ -134,9 +135,10 @@ def invoke_llm(message, max_tokens=1000):
     client, model_name = result
     
     # Use chat completion for conversational models
-    messages = [
-        {"role": "user", "content": message}
-    ]
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": message})
     
     try:
         response = client.chat_completion(
@@ -163,8 +165,9 @@ def invoke_llm(message, max_tokens=1000):
         elif "not supported" in error_msg.lower():
             # Fallback to text generation if chat not supported
             try:
+                full_prompt = message if not system_prompt else f"{system_prompt}\n\nUser:\n{message}\n\nAssistant:"
                 response = client.text_generation(
-                    message,
+                    full_prompt,
                     model="mistralai/Mistral-7B-Instruct-v0.1",
                     max_new_tokens=min(max_tokens, 500),
                     temperature=0.7
@@ -174,6 +177,28 @@ def invoke_llm(message, max_tokens=1000):
                 return "AI service temporarily unavailable. Please try again."
         else:
             return f"Error: {error_msg[:200]}"
+
+def sanitize_hint(text: str) -> str:
+    """Clean model output to a concise, single hint without role tags or extra Q&A."""
+    if not text:
+        return ""
+    # Remove bracketed role markers like [STU], [/ASS], [USER], etc.
+    text = re.sub(r"\[/?(STU|ASS|SYS|INST|USER|ASSISTANT)\]", "", text, flags=re.IGNORECASE)
+    # Drop obvious dialogue labels at line starts
+    lines = []
+    for line in text.splitlines():
+        if re.match(r"^\s*(Q:|A:|Student:|Assistant:|User:|System:)\s*", line, flags=re.IGNORECASE):
+            continue
+        lines.append(line)
+    text = "\n".join(lines).strip()
+    # Collapse excessive whitespace
+    text = re.sub(r"\n{2,}", "\n", text).strip()
+    # Keep only the first 2-3 sentences
+    sentences = re.split(r"(?<=[\.\!?])\s+", text)
+    if len(sentences) > 3:
+        text = " ".join(sentences[:3]).strip()
+    # Ensure it's a single concise paragraph
+    return text
 
 def get_study_material(checkpoint_obj):
     # MILESTONE 1: Prioritize user-provided notes first
@@ -275,11 +300,22 @@ def get_rag_hint(search_index, question, topic):
     
     if not context:
         return f"Unable to retrieve relevant information for: {question}"
-    
-    prompt = f"Context: {context[:600]}\n\nQuestion: {question}\n\nBrief answer:"
-    
-    answer = invoke_llm(prompt, max_tokens=1000)
-    return answer if answer else "Unable to generate hint"
+
+    system_prompt = (
+        "You are a concise tutor. Return exactly one helpful hint in 2-3 sentences. "
+        "Use only the provided Context to guide the hint. Do not include questions, dialogue, role tags, or headings. "
+        "Do not reveal the full answer; nudge the learner toward it."
+    )
+
+    user_prompt = (
+        f"Context:\n{context[:1000]}\n\n"
+        f"Question:\n{question}\n\n"
+        "Task: Provide a single, self-contained hint (2-3 sentences) using only the Context."
+    )
+
+    answer = invoke_llm(user_prompt, max_tokens=180, system_prompt=system_prompt)
+    clean = sanitize_hint(answer)
+    return clean if clean else "Unable to generate hint"
 
 # MILESTONE 3: FEYNMAN TEACHING MODULE
 def generate_feynman_explanation(question, incorrect_answer, search_index):
