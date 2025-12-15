@@ -139,15 +139,10 @@ def load_llm():
     """Load Hugging Face Inference API client."""
     try:
         # Support common HF token names
-        api_key = get_secret_value(
-            "HF_API_KEY",
-            alt_names=["HUGGINGFACEHUB_API_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HF_TOKEN"],
-            default="",
-        )
+        api_key = get_secret_value("HF_API_KEY")
         if not api_key:
             raise ValueError("HF_API_KEY is not set in secrets")
-        
-        # Use meta-llama/Llama-3.2-3B-Instruct - capable instruction-following model
+  
         model_name = os.getenv("MODEL_NAME", "meta-llama/Llama-3.2-3B-Instruct")
         client = InferenceClient(token=api_key)
         
