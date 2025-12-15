@@ -1,15 +1,12 @@
 import streamlit as st
 import os
-import warnings
 from dotenv import load_dotenv
 from dataclasses import dataclass
 from typing import List, Dict
-import json
 import re
 
 # Load environment
 load_dotenv()
-os.environ["TAVILY_API_KEY"] = os.getenv("TAVILY_API_KEY", "")
 
 from huggingface_hub import InferenceClient
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -40,24 +37,6 @@ def get_secret_value(name: str, alt_names=None, default: str = "") -> str:
         if val:
             return val
     return default
-
-def get_secret_source(name: str, alt_names=None):
-    alt_names = alt_names or []
-    try:
-        if "st" in globals() and hasattr(st, "secrets"):
-            if name in st.secrets:
-                return True, "st.secrets", name
-            for alt in alt_names:
-                if alt in st.secrets:
-                    return True, "st.secrets", alt
-    except Exception:
-        pass
-    if os.getenv(name):
-        return True, "env", name
-    for alt in alt_names:
-        if os.getenv(alt):
-            return True, "env", alt
-    return False, "missing", None
 
 # Page config
 st.set_page_config(page_title="Neural Networks Study System", page_icon="NN", layout="wide")
@@ -112,8 +91,7 @@ complex patterns not just straight lines.
 
 # MILESTONE 4: STATE MANAGEMENT FOR SEAMLESS MULTI-CHECKPOINT PROGRESSION
 
-if 'initialized' not in st.session_state:
-    st.session_state.initialized = False
+if 'current_checkpoint' not in st.session_state:
     st.session_state.current_checkpoint = None
     st.session_state.study_material = None
     st.session_state.search_index = None
@@ -261,8 +239,8 @@ def get_study_material(checkpoint_obj):
         web_results = tavily_client.search(
             search_string, 
             max_results=3,
-            search_depth="advanced",  # Gets longer, more detailed content
-            include_answer=True,       # Include AI-generated summary
+            search_depth="advanced",
+            include_answer=True,
         )
     except Exception as e:
         return f"Topic: {checkpoint_obj.topic}\n\nLearning objectives:\n" + "\n".join([f"- {obj}" for obj in checkpoint_obj.objectives]), f"Error: {str(e)}"
