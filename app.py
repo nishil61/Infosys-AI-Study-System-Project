@@ -18,6 +18,29 @@ from langchain_community.vectorstores import FAISS
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 
+# Secrets helper: read from Streamlit secrets and environment fallbacks
+def get_secret_value(name: str, alt_names=None, default: str = "") -> str:
+    alt_names = alt_names or []
+    # 1) Streamlit Secrets
+    try:
+        if "st" in globals() and hasattr(st, "secrets"):
+            if name in st.secrets:
+                return str(st.secrets[name])
+            for alt in alt_names:
+                if alt in st.secrets:
+                    return str(st.secrets[alt])
+    except Exception:
+        pass
+    # 2) Environment variables
+    val = os.getenv(name)
+    if val:
+        return val
+    for alt in alt_names:
+        val = os.getenv(alt)
+        if val:
+            return val
+    return default
+
 # Page config
 st.set_page_config(page_title="Neural Networks Study System", page_icon="NN", layout="wide")
 
@@ -97,7 +120,8 @@ if 'initialized' not in st.session_state:
 def load_llm():
     """Load Hugging Face Inference API client."""
     try:
-        api_key = os.getenv("HF_API_KEY", "")
+        # Support both HF_API_KEY and HUGGINGFACEHUB_API_TOKEN
+        api_key = get_secret_value("HF_API_KEY", alt_names=["HUGGINGFACEHUB_API_TOKEN"], default="")
         if not api_key:
             raise ValueError("HF_API_KEY is not set in secrets")
         
@@ -116,7 +140,7 @@ def load_embeddings():
 
 @st.cache_resource
 def load_web_searcher():
-    api_key = os.getenv("TAVILY_API_KEY", "")
+    api_key = get_secret_value("TAVILY_API_KEY", default="")
     if not api_key:
         raise ValueError("TAVILY_API_KEY is not set")
     return TavilyClient(api_key=api_key)
