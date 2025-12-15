@@ -100,8 +100,8 @@ def load_llm():
         if not api_key:
             raise ValueError("HF_API_KEY is not set in secrets")
         
-        # Use mistralai/Mistral-7B-Instruct-v0.2 - supports text-generation
-        model_name = os.getenv("MODEL_NAME", "mistralai/Mistral-7B-Instruct-v0.2")
+        # Use GPT-2 - lightweight, fast, and well-supported on free tier
+        model_name = os.getenv("MODEL_NAME", "gpt2")
         client = InferenceClient(token=api_key)
         
         return client, model_name
@@ -133,8 +133,8 @@ def invoke_llm(message, max_tokens=1000):
     
     client, model_name = result
     
-    # Format for Mistral instruction models
-    prompt = f"[INST] {message} [/INST]"
+    # GPT-2 uses plain text prompts
+    prompt = message
     
     try:
         response = client.text_generation(
