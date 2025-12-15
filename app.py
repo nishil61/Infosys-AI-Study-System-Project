@@ -257,11 +257,21 @@ def get_study_material(checkpoint_obj):
     
     try:
         tavily_client = load_web_searcher()
-        web_results = tavily_client.search(search_string, max_results=3)
+        # Use advanced search depth for more comprehensive content
+        web_results = tavily_client.search(
+            search_string, 
+            max_results=3,
+            search_depth="advanced",  # Gets longer, more detailed content
+            include_answer=True,       # Include AI-generated summary
+        )
     except Exception as e:
         return f"Topic: {checkpoint_obj.topic}\n\nLearning objectives:\n" + "\n".join([f"- {obj}" for obj in checkpoint_obj.objectives]), f"Error: {str(e)}"
     
     all_content = []
+    
+    # Include AI-generated answer summary if available
+    if isinstance(web_results, dict) and web_results.get("answer"):
+        all_content.append(f"**Summary:** {web_results['answer']}")
     
     # Tavily returns a dict with a "results" list
     results_list = web_results.get("results", web_results) if isinstance(web_results, dict) else web_results
@@ -269,23 +279,36 @@ def get_study_material(checkpoint_obj):
     if isinstance(results_list, list):
         for result in results_list:
             if isinstance(result, dict):
-                text_content = result.get("content") or result.get("snippet") or ""
+                # Prefer raw_content (full page) > content (snippet)
+                text_content = result.get("raw_content") or result.get("content") or result.get("snippet") or ""
+                title = result.get("title", "")
+                url = result.get("url", "")
+                
+                if text_content and len(text_content.strip()) > 0:
+                    # Format with title and source for better readability
+                    if title:
+                        formatted = f"**{title}**\n\n{text_content}"
+                    else:
+                        formatted = text_content
+                    if url:
+                        formatted += f"\n\n_Source: {url}_"
+                    all_content.append(formatted)
             elif isinstance(result, str):
-                text_content = result
+                if result.strip():
+                    all_content.append(result)
             else:
                 text_content = str(result)
-
-            if text_content and len(text_content.strip()) > 0:
-                all_content.append(text_content)
+                if text_content.strip():
+                    all_content.append(text_content)
     elif isinstance(results_list, dict):
-        text_content = results_list.get("content", str(results_list))
+        text_content = results_list.get("raw_content") or results_list.get("content", str(results_list))
         if text_content:
             all_content.append(text_content)
     else:
         all_content.append(str(results_list))
     
     if all_content:
-        return "\n\n---\n\n".join(all_content), f"Retrieved {len(all_content)} web results"
+        return "\n\n---\n\n".join(all_content), f"Retrieved {len(all_content) - (1 if web_results.get('answer') else 0)} web results"
     else:
         return f"Topic: {checkpoint_obj.topic}\n\nLearning objectives:\n" + "\n".join([f"- {obj}" for obj in checkpoint_obj.objectives]), "No web results; using objectives"
 
