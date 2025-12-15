@@ -147,8 +147,8 @@ def load_llm():
         if not api_key:
             raise ValueError("HF_API_KEY is not set in secrets")
         
-        # Use HuggingFaceH4/zephyr-7b-beta - reliable serverless model
-        model_name = os.getenv("MODEL_NAME", "HuggingFaceH4/zephyr-7b-beta")
+        # Use meta-llama/Llama-3.2-3B-Instruct - capable instruction-following model
+        model_name = os.getenv("MODEL_NAME", "meta-llama/Llama-3.2-3B-Instruct")
         client = InferenceClient(token=api_key)
         
         return client, model_name
@@ -228,14 +228,20 @@ def sanitize_hint(text: str) -> str:
     """Clean model output to a concise, single hint without role tags or extra Q&A."""
     if not text:
         return ""
-    # Remove bracketed role markers like [STU], [/ASS], [USER], etc.
-    text = re.sub(r"\[/?(STU|ASS|SYS|INST|USER|ASSISTANT)\]", "", text, flags=re.IGNORECASE)
-    # Drop obvious dialogue labels at line starts
+    # Remove bracketed role markers like [STU], [/ASS], [USER], [STUDENT], [HINT], etc.
+    text = re.sub(r"\[/?(STU|ASS|SYS|INST|USER|ASSISTANT|STUDENT|TEACHER|HINT|ANSWER|QUESTION)\]", "", text, flags=re.IGNORECASE)
+    # Remove lines that are questions or dialogue labels
     lines = []
     for line in text.splitlines():
-        if re.match(r"^\s*(Q:|A:|Student:|Assistant:|User:|System:)\s*", line, flags=re.IGNORECASE):
+        line = line.strip()
+        # Skip dialogue labels
+        if re.match(r"^\s*(Q:|A:|Student:|Assistant:|User:|System:|Hint:|Answer:)\s*", line, flags=re.IGNORECASE):
             continue
-        lines.append(line)
+        # Skip lines that are just questions (likely echo of the original question)
+        if line.endswith('?') and len(line) > 30:
+            continue
+        if line:
+            lines.append(line)
     text = "\n".join(lines).strip()
     # Collapse excessive whitespace
     text = re.sub(r"\n{2,}", "\n", text).strip()
@@ -351,15 +357,16 @@ def get_rag_hint(search_index, question, topic):
         return f"Unable to retrieve relevant information for: {question}"
 
     system_prompt = (
-        "You are a concise tutor. Return exactly one helpful hint in 2-3 sentences. "
-        "Use only the provided Context to guide the hint. Do not include questions, dialogue, role tags, or headings. "
-        "Do not reveal the full answer; nudge the learner toward it."
+        "You are a helpful tutor who provides clear, direct explanations. "
+        "Give a brief explanatory ANSWER (2-3 sentences) that helps the student understand the concept. "
+        "Do NOT ask questions. Do NOT echo the question back. Do NOT use role tags like [STUDENT] or [HINT]. "
+        "Just provide a helpful explanation based on the context."
     )
 
     user_prompt = (
         f"Context:\n{context[:1000]}\n\n"
-        f"Question:\n{question}\n\n"
-        "Task: Provide a single, self-contained hint (2-3 sentences) using only the Context."
+        f"Student's question: {question}\n\n"
+        "Provide a helpful 2-3 sentence explanation that answers this question. Do not ask any questions in your response."
     )
 
     answer = invoke_llm(user_prompt, max_tokens=180, system_prompt=system_prompt)
