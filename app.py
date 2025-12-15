@@ -100,13 +100,13 @@ def load_llm():
         if not api_key:
             raise ValueError("HF_API_KEY is not set in secrets")
         
-        # Use GPT-2 - lightweight, fast, and well-supported on free tier
-        model_name = os.getenv("MODEL_NAME", "gpt2")
+        # Use HuggingFaceH4/zephyr-7b-beta - reliable serverless model
+        model_name = os.getenv("MODEL_NAME", "HuggingFaceH4/zephyr-7b-beta")
         client = InferenceClient(token=api_key)
         
         return client, model_name
     except Exception as e:
-        # Don't show error in UI, let calling code handle it
+        st.error(f"Error loading Hugging Face client: {e}")
         return None, None
 
 @st.cache_resource
@@ -133,21 +133,22 @@ def invoke_llm(message, max_tokens=1000):
     
     client, model_name = result
     
-    # GPT-2 uses plain text prompts
-    prompt = message
+    # Use chat completion for conversational models
+    messages = [
+        {"role": "user", "content": message}
+    ]
     
     try:
-        response = client.text_generation(
-            prompt,
+        response = client.chat_completion(
+            messages=messages,
             model=model_name,
-            max_new_tokens=min(max_tokens, 500),
-            temperature=0.7,
-            do_sample=True,
-            return_full_text=False
+            max_tokens=min(max_tokens, 500),
+            temperature=0.7
         )
         
-        if isinstance(response, str):
-            generated = response.strip()
+        # Extract the assistant's response
+        if hasattr(response, 'choices') and len(response.choices) > 0:
+            generated = response.choices[0].message.content.strip()
         else:
             generated = str(response).strip()
             
@@ -159,8 +160,18 @@ def invoke_llm(message, max_tokens=1000):
             return "The AI model is currently unavailable. Please try again later."
         elif "503" in error_msg or "loading" in error_msg.lower():
             return "The AI model is loading. Please wait a moment and try again."
-        elif "rate limit" in error_msg.lower():
-            return "Rate limit reached. Please wait a moment and try again."
+        elif "not supported" in error_msg.lower():
+            # Fallback to text generation if chat not supported
+            try:
+                response = client.text_generation(
+                    message,
+                    model="mistralai/Mistral-7B-Instruct-v0.1",
+                    max_new_tokens=min(max_tokens, 500),
+                    temperature=0.7
+                )
+                return response.strip() if response else "Unable to generate response"
+            except:
+                return "AI service temporarily unavailable. Please try again."
         else:
             return f"Error: {error_msg[:200]}"
 
@@ -218,10 +229,9 @@ def make_search_index(material_text):
 # MILESTONE 2: QUESTION GENERATION
 def generate_questions(checkpoint_obj, material, num_questions=2):
     # Generate targeted questions based on checkpoint objectives
-    # Simpler prompt for GPT-2
-    message = f"Write {num_questions} questions about {checkpoint_obj.topic}.\n\n1."
+    message = f"Generate {num_questions} numbered questions about: {checkpoint_obj.topic}\n\nQuestions:"
     
-    reply = invoke_llm(message, max_tokens=100)
+    reply = invoke_llm(message, max_tokens=80)
     
     questions = []
     lines = reply.split("\n")
@@ -266,15 +276,9 @@ def get_rag_hint(search_index, question, topic):
     if not context:
         return f"Unable to retrieve relevant information for: {question}"
     
-    # Simpler prompt format for GPT-2
-    prompt = f"Answer this question using the information below:\n\nInformation: {context[:400]}\n\nQuestion: {question}\n\nAnswer:"
+    prompt = f"Context: {context[:600]}\n\nQuestion: {question}\n\nBrief answer:"
     
-    answer = invoke_llm(prompt, max_tokens=150)
-    
-    # Clean up error messages
-    if answer.startswith("Error:") or answer.startswith("The AI model"):
-        return "Hint: " + context[:300] + "\n\nReview the study material above for the answer."
-    
+    answer = invoke_llm(prompt, max_tokens=1000)
     return answer if answer else "Unable to generate hint"
 
 # MILESTONE 3: FEYNMAN TEACHING MODULE
@@ -290,10 +294,24 @@ def generate_feynman_explanation(question, incorrect_answer, search_index):
         except:
             context = "General neural network concepts"
     
-    # Feynman-style prompt: Simpler for GPT-2
-    feynman_prompt = f"Explain in simple terms:\n\nTopic: {question}\n\nStudent's answer: {incorrect_answer}\n\nKey information: {context}\n\nSimple explanation:"
+    # Feynman-style prompt: Simple terms + Analogies + Avoid jargon
+    feynman_prompt = f"""Explain this concept in the simplest way possible, like teaching a 10-year-old:
+
+Question: {question}
+
+Their confused answer: {incorrect_answer}
+
+Context: {context}
+
+Rules:
+1. Use simple everyday analogies (like comparing to cooking, building blocks, etc.)
+2. Avoid technical jargon - if you must use it, explain it immediately
+3. Use concrete examples
+4. Keep it short (2-3 sentences)
+
+Simple explanation:"""
     
-    explanation = invoke_llm(feynman_prompt, max_tokens=200)
+    explanation = invoke_llm(feynman_prompt, max_tokens=1000)
     return explanation if explanation else "Let me explain this more simply: " + context[:200]
 
 # MILESTONE 2 & 3: UNDERSTANDING VERIFICATION & KNOWLEDGE GAP IDENTIFICATION
