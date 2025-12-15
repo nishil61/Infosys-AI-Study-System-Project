@@ -218,9 +218,10 @@ def make_search_index(material_text):
 # MILESTONE 2: QUESTION GENERATION
 def generate_questions(checkpoint_obj, material, num_questions=2):
     # Generate targeted questions based on checkpoint objectives
-    message = f"Generate {num_questions} numbered questions about: {checkpoint_obj.topic}\n\nQuestions:"
+    # Simpler prompt for GPT-2
+    message = f"Write {num_questions} questions about {checkpoint_obj.topic}.\n\n1."
     
-    reply = invoke_llm(message, max_tokens=80)
+    reply = invoke_llm(message, max_tokens=100)
     
     questions = []
     lines = reply.split("\n")
@@ -265,9 +266,15 @@ def get_rag_hint(search_index, question, topic):
     if not context:
         return f"Unable to retrieve relevant information for: {question}"
     
-    prompt = f"Context: {context[:600]}\n\nQuestion: {question}\n\nBrief answer:"
+    # Simpler prompt format for GPT-2
+    prompt = f"Answer this question using the information below:\n\nInformation: {context[:400]}\n\nQuestion: {question}\n\nAnswer:"
     
-    answer = invoke_llm(prompt, max_tokens=1000)
+    answer = invoke_llm(prompt, max_tokens=150)
+    
+    # Clean up error messages
+    if answer.startswith("Error:") or answer.startswith("The AI model"):
+        return "Hint: " + context[:300] + "\n\nReview the study material above for the answer."
+    
     return answer if answer else "Unable to generate hint"
 
 # MILESTONE 3: FEYNMAN TEACHING MODULE
@@ -283,24 +290,10 @@ def generate_feynman_explanation(question, incorrect_answer, search_index):
         except:
             context = "General neural network concepts"
     
-    # Feynman-style prompt: Simple terms + Analogies + Avoid jargon
-    feynman_prompt = f"""Explain this concept in the simplest way possible, like teaching a 10-year-old:
-
-Question: {question}
-
-Their confused answer: {incorrect_answer}
-
-Context: {context}
-
-Rules:
-1. Use simple everyday analogies (like comparing to cooking, building blocks, etc.)
-2. Avoid technical jargon - if you must use it, explain it immediately
-3. Use concrete examples
-4. Keep it short (2-3 sentences)
-
-Simple explanation:"""
+    # Feynman-style prompt: Simpler for GPT-2
+    feynman_prompt = f"Explain in simple terms:\n\nTopic: {question}\n\nStudent's answer: {incorrect_answer}\n\nKey information: {context}\n\nSimple explanation:"
     
-    explanation = invoke_llm(feynman_prompt, max_tokens=1000)
+    explanation = invoke_llm(feynman_prompt, max_tokens=200)
     return explanation if explanation else "Let me explain this more simply: " + context[:200]
 
 # MILESTONE 2 & 3: UNDERSTANDING VERIFICATION & KNOWLEDGE GAP IDENTIFICATION
