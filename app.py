@@ -108,7 +108,7 @@ if 'current_checkpoint' not in st.session_state:
     # MILESTONE 3: Feynman Teaching Module state
     st.session_state.feynman_explanations = {}
     st.session_state.incorrect_answers = {}
-    st.session_state.retry_count = {}  # Per-checkpoint retry tracking
+    st.session_state.retry_count = {}
     st.session_state.max_retries = 3
 
 # LLM INTEGRATION: Core Large Language Model for reasoning and generation
@@ -116,7 +116,6 @@ if 'current_checkpoint' not in st.session_state:
 def load_llm():
     """Load Hugging Face Inference API client."""
     try:
-        # Support common HF token names
         api_key = get_secret_value("HF_API_KEY")
         if not api_key:
             raise ValueError("HF_API_KEY is not set in secrets")
@@ -181,19 +180,6 @@ def invoke_llm(message, max_tokens=1000, system_prompt=None):
             return "The AI model is currently unavailable. Please try again later."
         elif "503" in error_msg or "loading" in error_msg.lower():
             return "The AI model is loading. Please wait a moment and try again."
-        elif "not supported" in error_msg.lower():
-            # Fallback to text generation if chat not supported
-            try:
-                full_prompt = message if not system_prompt else f"{system_prompt}\n\nUser:\n{message}\n\nAssistant:"
-                response = client.text_generation(
-                    full_prompt,
-                    model="mistralai/Mistral-7B-Instruct-v0.1",
-                    max_new_tokens=min(max_tokens, 500),
-                    temperature=0.7
-                )
-                return response.strip() if response else "Unable to generate response"
-            except:
-                return "AI service temporarily unavailable. Please try again."
         else:
             return f"Error: {error_msg[:200]}"
 
