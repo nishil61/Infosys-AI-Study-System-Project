@@ -8,6 +8,17 @@ import re
 # Load environment
 load_dotenv()
 
+# LangSmith Tracing Setup
+from langsmith import traceable
+
+# Configure LangSmith tracing via environment variables (supports both naming conventions)
+langsmith_api_key = os.getenv("LANGSMITH_API_KEY") or os.getenv("LANGCHAIN_API_KEY", "")
+if langsmith_api_key:
+    os.environ["LANGSMITH_TRACING"] = "true"
+    os.environ["LANGSMITH_API_KEY"] = langsmith_api_key
+    os.environ["LANGSMITH_ENDPOINT"] = os.getenv("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com")
+    os.environ["LANGSMITH_PROJECT"] = os.getenv("LANGSMITH_PROJECT") or os.getenv("LANGCHAIN_PROJECT", "AI-Study-System")
+
 from huggingface_hub import InferenceClient
 from langchain_huggingface import HuggingFaceEmbeddings
 from tavily import TavilyClient
@@ -144,6 +155,7 @@ def load_text_splitter():
     return RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=150)
 
 # Helper functions
+@traceable(name="invoke_llm", run_type="llm")
 def invoke_llm(message, max_tokens=1000, system_prompt=None):
     result = load_llm()
     
@@ -211,6 +223,7 @@ def sanitize_hint(text: str) -> str:
     # Ensure it's a single concise paragraph
     return text
 
+@traceable(name="get_study_material", run_type="retriever")
 def get_study_material(checkpoint_obj):
     # MILESTONE 1: Prioritize user-provided notes first
     if checkpoint_obj.id in USER_NOTES and USER_NOTES[checkpoint_obj.id].strip():
@@ -286,6 +299,7 @@ def make_search_index(material_text):
     return search_index
 
 # MILESTONE 2: QUESTION GENERATION
+@traceable(name="generate_questions", run_type="chain")
 def generate_questions(checkpoint_obj, material, num_questions=2):
     # Generate targeted questions based on checkpoint objectives
     message = f"Generate {num_questions} numbered questions about: {checkpoint_obj.topic}\n\nQuestions:"
@@ -325,6 +339,7 @@ def generate_questions(checkpoint_obj, material, num_questions=2):
     
     return questions[:num_questions]
 
+@traceable(name="get_rag_hint", run_type="chain")
 def get_rag_hint(search_index, question, topic):
     if search_index is None:
         return "Hint not available (no study material indexed)"
@@ -356,6 +371,7 @@ def get_rag_hint(search_index, question, topic):
     return clean if clean else "Unable to generate hint"
 
 # MILESTONE 3: FEYNMAN TEACHING MODULE
+@traceable(name="generate_feynman_explanation", run_type="chain")
 def generate_feynman_explanation(question, incorrect_answer, search_index):
     """Generate simplified Feynman-style explanation with analogies for incorrect answers."""
     
@@ -389,6 +405,7 @@ Simple explanation:"""
     return explanation if explanation else "Let me explain this more simply: " + context[:200]
 
 # MILESTONE 2 & 3: UNDERSTANDING VERIFICATION & KNOWLEDGE GAP IDENTIFICATION
+@traceable(name="grade_answers", run_type="chain")
 def grade_answers(checkpoint_obj, material, questions, answers):
     all_marks = []
     weak_areas = []
